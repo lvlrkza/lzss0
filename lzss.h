@@ -122,7 +122,8 @@ static uint lzss_decompress(u8* src, uint srclen, u8* dst, uint dstlen, struct l
 
             flags = *src++;
             flags |= 0xff00;
-        } else if(flags & 1) { // uncoded byte
+        }
+        if(flags & 1) { // uncoded byte
             if(src >= srcend)
                 break;
 
@@ -192,7 +193,7 @@ static uint THRESHOLD =	2;    // encode string into position and length
 						      // if match_length is greater than this
 
 static int  NIL; // index for root of binary search trees
-static char init_chr;
+static int  init_chr;
 
 static uint textsize = 0; // text size counter
 static uint codesize = 0; // code size counter
