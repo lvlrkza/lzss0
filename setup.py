@@ -10,7 +10,7 @@ setup(
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python 3",
-        "License :: GNU GPL3",
+        "License :: GNU GPLv3.-1",
         "Operating System :: OS Independent"
     ],
     python_requires=">=3.0",
