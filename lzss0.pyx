@@ -1,17 +1,17 @@
 # I LOVE CYTHON <333
 
 cdef extern from "lzss.h":
-    ctypedef unsigned char u8
+    ctypedef unsigned char uchar
     ctypedef unsigned int  uint
 
     cdef struct lzss_param:
-        uint EI
-        uint EJ
-        uint P
-        char init_chr
+        uint  EI
+        uint  EJ
+        uint  P
+        uchar init_chr
     
-    uint lzss_decompress(u8* src, uint srclen, u8* dst, uint dstlen, lzss_param param)
-    uint lzss_compress(u8* src, uint srclen, u8* dst, uint dstlen, lzss_param param)
+    uint lzss_decompress(uchar* src, int srclen, uchar* dst, int dstlen, lzss_param param)
+    uint lzss_compress(uchar* src, int srclen, uchar* dst, int dstlen, lzss_param param)
 
 def decompress(zbytes: bytes, bytessz=-1, refsz=12, lensz=4, ini=0) -> bytes:
     if ((refsz + lensz) % 8) != 0:
@@ -39,7 +39,7 @@ def compress(_bytes: bytes, refsz=12, lensz=4, ini=0) -> bytes:
 
     _zbytes = b"\0" * len(_bytes)
 
-    zbytessz = lzss_compress(_bytes[:len(_bytes)], len(_bytes), _zbytes, len(_bytes), lzss_param(EI=refsz, EJ=lensz, P=(refsz + lensz)/8, init_chr=ini))
+    zbytessz = lzss_compress(_bytes[:len(_bytes)], len(_bytes), _zbytes[:len(_bytes)], len(_bytes), lzss_param(EI=refsz, EJ=lensz, P=(refsz + lensz)/8, init_chr=ini))
 
     if zbytessz == 0 or zbytessz >= len(_bytes):
         raise ValueError("Bad compression")

@@ -1,6 +1,7 @@
 #ifndef LZSS_H
-#define LZSS_H 1
+#define LZSS_H
 #define LZSS_VERSION 1.0
+#define LZSS_DEBUG 0
 
 // code cleanups, c++ compatibility, and algorithm parameters added
 // thanks to,
@@ -16,18 +17,16 @@ extern "C" {
 #include <stdlib.h>
 #include <string.h>
 
-typedef unsigned char u8;
-typedef unsigned int  uint;
+typedef unsigned char  uchar;
+typedef unsigned short ushort;
+typedef unsigned int   uint;
 
 struct lzss_param {
-    uint EI;       // n reference offset bits
-    uint EJ;       // n reference length bits
-    uint P;        // output code threshold
-    char init_chr; // initial buffer character
+    uint  EI;       // n code offset bits
+    uint  EJ;       // n code length bits
+    uint  P;        // output text threshold
+    uchar init_chr; // initial sliding window character
 };
-
-#define LZSS_PARAM  (struct lzss_param){12, 4, 2, ' '}
-#define LZSS0_PARAM (struct lzss_param){12, 4, 2, 0}
 
 enum lzss_window_type {
     LZSS_WINDOW_VESPERIA = 0xff,
@@ -35,9 +34,9 @@ enum lzss_window_type {
     LZSS_WINDOW_BACKWARD = 0xfd
 };
 
-static void lzss_set_window(u8* window, uint window_size, int init_chr) {
+static void lzss_set_window(uchar* window, uint window_size, uchar init_chr) {
     uint i = 0;
-    int  n;
+    uint n; // vesperia value
 
     switch(init_chr) {
     case LZSS_WINDOW_VESPERIA: // Tales of Vesperia (thanks to delguoqing)
@@ -70,102 +69,87 @@ static void lzss_set_window(u8* window, uint window_size, int init_chr) {
 }
 
 // returns n of decoded bytes;
-#ifndef __cplusplus // C
-static uint lzss_decompress(u8* src, uint srclen, u8* dst, uint dstlen, struct lzss_param param) {
-#else              // C++
-static uint lzss_decompress(u8* src, uint srclen, u8* dst, uint dstlen, struct lzss_param param=LZSS0_PARAM) {
-#endif
-    // MUST sum to 16 bits (or 2 bytes)
-    uint EI     = param.EI; // typically 10..13
-    uint EJ     = param.EJ; // typically 4..5
+static uint lzss_decompress(uchar* src, uint srclen, uchar* dst, uint dstlen, struct lzss_param param) {
+    if((param.EI + param.EJ) != 16)
+        return 0;
 
-    uint P        = param.P; // if reference length <= P, output a character */
-    uint rless    = P;       // in some rare implementations it could be 0
-    char init_chr = param.init_chr;
+    // parameters
+    uint  EI       = param.EI;       // n code offset bits
+    uint  EJ       = param.EJ;       // n code length bits
+    uint  P        = param.P;        // reference length <= P, output decoded symbol
+    uchar init_chr = param.init_chr; // initial sliding window character
 
-    uint slide_winsz = 0;
-    u8*  slide_win   = NULL;
+    // bitmasks
+    uint N = 1 << EI; // sliding window size & bitmask
+    uint F = 1 << EJ; // code length bitmask
 
-    u8*  dststart    = dst;
-    u8*  srcend      = src + srclen;
-    u8*  dstend      = dst + dstlen;
-
-    int i, j, k, r;
-    u8 c; // temporary decoded byte
-    unsigned flags;
-
-    uint N = 1 << EI; // sliding window size
-    uint F = 1 << EJ;
-
-    r = (N - F) - rless;
-
-    N--;
-    F--;
-
-    if(slide_winsz < N) {
-#ifndef __cplusplus
-        slide_win = realloc(slide_win, N);
-#else
-        slide_win = reinterpret_cast<u8*>(realloc(slide_win, N));
-#endif
-        if(!slide_win)
-            return 0;
-
-        slide_winsz = N;
-    }
+    // sliding window
+    uchar* slide_win = (uchar*)malloc(N);
+    if(!slide_win)
+        return 0;
     lzss_set_window(slide_win, N, init_chr);
 
-    for(flags = 0;; flags >>= 1) {
+    ushort  i, // first   code byte (offset)
+            j; // second  code byte (length)
+    uint    k; // current code index
+    uchar   c; // current symbol
+
+    uint r     = (N - F) - P, // sliding window index
+         flags = 0;           // is symbol coded?
+
+    // buffers
+    uchar* dststart = dst;          // to calculate n decoded bytes
+    uchar* srcend   = src + srclen; // coded buffer overrun check
+    uchar* dstend   = dst + dstlen; // uncoded buffer overrun check
+    
+    N--; F--; // decremented for bitmasking
+
+    for(;; flags >>= 1) {
         if(!(flags & 0x100)) {
             if(src >= srcend)
                 break;
-
-            flags = *src++;
+            flags  = *src++;
             flags |= 0xff00;
         }
-        if(flags & 1) { // uncoded byte
+        if(flags & 1) { // uncoded symbol
             if(src >= srcend)
                 break;
-
             c = *src++;
 
             if(dst >= dstend)
                 goto quit;
-
             *dst++ = c;
 
             slide_win[r] = c;
-            r = (r + 1) & N;
-        } else {               // coded byte
+            r            = (r + 1) & N;
+        } else { // coded symbol
             if(src >= srcend)
                 break;
-
             i = *src++;
 
             if(src >= srcend)
                 break;
-
             j = *src++;
 
-            i |= ((j >> EJ) << 8); // take reference offset
-            j  = (j & F) + P;      // take reference length
+            i |= ((j >> EJ) << 8); // get code offset
+            j  = (j & F) + P;      // get code length
 
-            // write coded reference to dst
+            // write symbols to text
             for(k = 0; k <= j; k++) {
                 c = slide_win[(i + k) & N];
 
                 if(dst >= dstend)
                     goto quit;
-
                 *dst++ = c;
 
-                // move in sliding window
                 slide_win[r] = c;
-                r = (r + 1) & N;
+                r            = (r + 1) & N;
             }
         }
     }
 quit:
+    free(slide_win);
+
     return (dst - dststart);
 }
 
@@ -187,18 +171,18 @@ quit:
 
 // i <3 Haruhiko Okumura
 
-static uint N         =	4096; // size of ring buffer
-static uint F         =	18;	  // upper limit for match_length
-static uint THRESHOLD =	2;    // encode string into position and length
-						      // if match_length is greater than this
+static uint N;         // size of ring buffer
+static uint F;         // upper limit for match_length
+static uint THRESHOLD; // encode string into position and length
+					   // if match_length is greater than this
 
-static int  NIL; // index for root of binary search trees
-static int  init_chr;
+static int  NIL;      // index for root of binary search trees
+static int  init_chr; // initial buffer character
 
 static uint textsize = 0; // text size counter
 static uint codesize = 0; // code size counter
 
-static u8* text_buf = NULL; // ring buffer of size N
+static uchar* text_buf = NULL; // ring buffer of size N
 			                // with extra F-1 bytes to facilitate string comparison
 
 static int match_position, // of longest match.  These are
@@ -210,7 +194,7 @@ static int *lson = NULL,
            *rson = NULL,
            *dad  = NULL;
 
-static u8 *infile   = NULL,
+static uchar *infile   = NULL,
           *infilel  = NULL,
           *outfile  = NULL,
           *outfilel = NULL;
@@ -258,7 +242,7 @@ static void lzss_init_tree() {
  */
 static void lzss_insert_node(int r) {
 	int i;
-    u8* key = &text_buf[r];
+    uchar* key = &text_buf[r];
     int p = N + 1 + key[0];
     int cmp = 1;
 
@@ -357,7 +341,7 @@ static void lzss_delete_node(int p) {
 static void lzss_encode() {
 	int i, c, r, s;
     int len, last_match_length, code_buf_ptr;
-	u8 code_buf[17], mask;
+	uchar code_buf[17], mask;
 	
 	lzss_init_tree();
 
@@ -401,12 +385,12 @@ static void lzss_encode() {
 			code_buf[0]              |= mask;        // 'send one byte' flag
 			code_buf[code_buf_ptr++]  = text_buf[r]; // Send uncoded
 		} else {
-			code_buf[code_buf_ptr++] = (u8)match_position;
+			code_buf[code_buf_ptr++] = (uchar)match_position;
 
             // Send position and length pair.
             // Note, match_length > THRESHOLD.
 			code_buf[code_buf_ptr++] =
-                (u8)(((match_position >> 4) & 0xf0) |
+                (uchar)(((match_position >> 4) & 0xf0) |
                 (match_length - (THRESHOLD + 1)));
         }
 
@@ -465,37 +449,23 @@ static void lzss_encode() {
 }
 
 // returns n of coded bytes;
-#ifndef __cplusplus
-static uint lzss_compress(u8* src, uint srclen, u8* dst, uint dstlen, struct lzss_param param) {
-#else
-static uint lzss_compress(u8* src, uint srclen, u8* dst, uint dstlen, struct lzss_param param=LZSS0_PARAM) {
-#endif
+static uint lzss_compress(uchar* src, uint srclen, uchar* dst, uint dstlen, struct lzss_param param) {
     infile   = src;
     infilel  = src + srclen;
     outfile  = dst;
     outfilel = dst + dstlen;
 
-    NIL = N;
-#ifndef __cplusplus
-    text_buf = realloc(text_buf, N + F - 1);
-    lson     = realloc(lson, sizeof(int) * (N + 1));
-    rson     = realloc(rson, sizeof(int) * (N + 257));
-    dad      = realloc(dad,  sizeof(int) * (N + 1));
-#else
-    // youd think c++ would at least be lenient with
-    // void* pointers, but no. c++ has to be fussy.
-    // why cant you be cool like your older brother, C?
-    text_buf = reinterpret_cast<u8*>(realloc(text_buf, N + F - 1));
-    lson     = reinterpret_cast<int*>(realloc(lson, sizeof(int) * (N + 1)));
-    rson     = reinterpret_cast<int*>(realloc(rson, sizeof(int) * (N + 257)));
-    dad      = reinterpret_cast<int*>(realloc(dad, sizeof(int) * (N + 1)));
-#endif
-   
     // set parameters before encoding
     N         = 1 << param.EI;
-    F         = 1 << param.EJ;
+    F         = (1 << param.EJ) + param.P;
     THRESHOLD = param.P;
     init_chr  = param.init_chr;
+    NIL       = N;
+
+    text_buf = (uchar*)realloc(text_buf, N + F - 1);
+    lson     = (int*)realloc(lson, sizeof(int) * (N + 1));
+    rson     = (int*)realloc(rson, sizeof(int) * (N + 257));
+    dad      = (int*)realloc(dad, sizeof(int) * (N + 1));
 
     lzss_encode();
 

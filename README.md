@@ -1,4 +1,4 @@
-# lzss0
+# lzss0 v1.1
 A LZSS implementation for python using Cython
 
 ## Dependencies
@@ -7,8 +7,5 @@ A LZSS implementation for python using Cython
 # Building
 `$ make`
 
-# Installing
-`# make install`
-
-# Uninstalling
-`# make uninstall`
+### TODO
+- Cleanup `lzss.h` compression functions
